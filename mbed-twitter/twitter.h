@@ -24,7 +24,9 @@ public:
     Twitter(NetworkInterface *iface);
     virtual ~Twitter();
     void set_keys(char *cons_key, char *cons_sec, char *accs_key, char *accs_sec);
-    void statuses_update(char *str);
+    void statuses_update(char *str, char *media_id_string);
+    void upload(char *media_id_string, char *buf, int size);
+    void upload_and_statuses_update(char *str, char *media_id_string, char *buf, int size);
 private:
     NetworkInterface *_iface;
     char *_cons_key;

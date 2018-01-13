@@ -22,19 +22,26 @@
 
 //#define URL_DECODE
 //#define BASE64_DECODE
-//#define TEST_PARAMS
+//#define DEBUG_PARAMS
+//#define CHECK_AUTH_STRING
+#define DEBUG_STATUSES_UPDATE
+#define DEBUG_UPLOAD
+#define DEBUG_HTTP_POST
+//#define DUMP_RESPONSE
+//#define SKIP_STATUSES_UPLOAD
 
 #ifndef NULL
 #define NULL 0
 #endif
 
 #define OAUTH_SIGNATURE_METHOD  "HMAC-SHA1"
-#define OAUTH_VERSION   "1.0"
-#define TWITTER_API_STATUES_UPDATE  "https://api.twitter.com/1.1/statuses/update.json"
+#define OAUTH_VERSION           "1.0"
+#define TWITTER_API_UPDATE      "https://api.twitter.com/1.1/statuses/update.json"
+#define TWITTER_API_UPLOAD      "https://upload.twitter.com/1.1/media/upload.json"
 
 #define MAX_MESSAGE_LENGTH 2048
 
-#define ENCODE_BUF_MAX  1024
+#define ENCODE_BUF_MAX  (1024*3)
 #define PARAM_BUF_MAX   512
 #define SIG_KEY_MAX     256
 #define SIG_DATA_MAX    512
@@ -47,6 +54,18 @@ static char sig_key[SIG_KEY_MAX];
 static char sig_data[SIG_DATA_MAX];
 static char sig_str[SIG_STR_MAX];
 static char auth_str[AUTH_STR_MAX];
+
+static char body[4096];
+
+#define BOUNDARY_MAX   20
+#define UPLOAD_HEADER_MAX   128
+#define MEDIA_BUF_MAX   100*1024
+
+static char boundary_buf[BOUNDARY_MAX];
+static char upload_header_buf[UPLOAD_HEADER_MAX];
+static char upload_body_top[256];
+static char upload_body_end[256];
+static char media_buf[MEDIA_BUF_MAX];
 
 typedef struct _PARAM {
     char *key;
@@ -63,7 +82,7 @@ PARAM req_params[] = {
         {(char *)NULL, (char *)NULL},
 };
 
-PARAM oauth_params[] = {
+PARAM statuses_oauth_params1[] = {
         {(char *)"oauth_consumer_key", (char *)""},
         {(char *)"oauth_nonce", (char *)""},
         {(char *)"oauth_signature_method", (char *)OAUTH_SIGNATURE_METHOD},
@@ -71,6 +90,30 @@ PARAM oauth_params[] = {
         {(char *)"oauth_token", (char *)""},
         {(char *)"oauth_version", (char *)OAUTH_VERSION},
         {(char *)"status", (char *)""},
+        {(char *)"oauth_signature", (char *)""},
+        {(char *)NULL, (char *)NULL},
+};
+
+PARAM statuses_oauth_params2[] = {
+        {(char *)"media_ids", (char *)""},
+        {(char *)"oauth_consumer_key", (char *)""},
+        {(char *)"oauth_nonce", (char *)""},
+        {(char *)"oauth_signature_method", (char *)OAUTH_SIGNATURE_METHOD},
+        {(char *)"oauth_timestamp", (char *)""},
+        {(char *)"oauth_token", (char *)""},
+        {(char *)"oauth_version", (char *)OAUTH_VERSION},
+        {(char *)"status", (char *)""},
+        {(char *)"oauth_signature", (char *)""},
+        {(char *)NULL, (char *)NULL},
+};
+
+PARAM upload_oauth_params[] = {
+        {(char *)"oauth_consumer_key", (char *)""},
+        {(char *)"oauth_nonce", (char *)""},
+        {(char *)"oauth_signature_method", (char *)OAUTH_SIGNATURE_METHOD},
+        {(char *)"oauth_timestamp", (char *)""},
+        {(char *)"oauth_token", (char *)""},
+        {(char *)"oauth_version", (char *)OAUTH_VERSION},
         {(char *)"oauth_signature", (char *)""},
         {(char *)NULL, (char *)NULL},
 };
@@ -541,6 +584,7 @@ static void set_param_value(PARAM *p, char *k, char *v)
     }
 }
 
+#ifdef DEBUG_PARAMS
 static void print_param_value(PARAM *p)
 {
     while (p->key != NULL) {
@@ -548,6 +592,7 @@ static void print_param_value(PARAM *p)
         p++;
     }
 }
+#endif
 
 static void create_signature(char *sig_str, char *sec1, char *sec2, char *req_method, char *req_url, PARAM *params)
 {
@@ -600,7 +645,7 @@ static void create_oauth_params(char *oauth_str, PARAM *params)
     strcat(oauth_str, param_buf);
 }
 
-static void _statuses_update(NetworkInterface *iface, char *ckey, char *csec, char *akey, char *asec, char *str)
+static void _statuses_update(NetworkInterface *iface, char *ckey, char *csec, char *akey, char *asec, char *str, char *media_id_string)
 {
     char timestamp_str[11];
     NTPClient ntp(iface);
@@ -616,21 +661,35 @@ static void _statuses_update(NetworkInterface *iface, char *ckey, char *csec, ch
             (char *)csec,
             (char *)asec,
             (char *)"POST",
-            (char *)TWITTER_API_STATUES_UPDATE,
+            (char *)TWITTER_API_UPDATE,
             req_params);
     //printf("sig_str: %s\n", sig_str);
-    set_param_value((PARAM *)oauth_params, (char *)"oauth_consumer_key", (char *)ckey);
-    set_param_value((PARAM *)oauth_params, (char *)"oauth_nonce", (char *)timestamp_str);
-    set_param_value((PARAM *)oauth_params, (char *)"oauth_timestamp", (char *)timestamp_str);
-    set_param_value((PARAM *)oauth_params, (char *)"oauth_token", (char *)akey);
-    set_param_value((PARAM *)oauth_params, (char *)"oauth_signature", (char *)sig_str);
-    set_param_value((PARAM *)oauth_params, (char *)"status", (char *)str);
-    //print_param_value((PARAM *)oauth_params);
-    create_oauth_params((char *)auth_str, (PARAM *)oauth_params);
+    if ((media_id_string != NULL) && (strlen(media_id_string) > 0)) {
+        set_param_value((PARAM *)statuses_oauth_params2, (char *)"oauth_consumer_key", (char *)ckey);
+        set_param_value((PARAM *)statuses_oauth_params2, (char *)"oauth_nonce", (char *)timestamp_str);
+        set_param_value((PARAM *)statuses_oauth_params2, (char *)"oauth_timestamp", (char *)timestamp_str);
+        set_param_value((PARAM *)statuses_oauth_params2, (char *)"oauth_token", (char *)akey);
+        set_param_value((PARAM *)statuses_oauth_params2, (char *)"oauth_signature", (char *)sig_str);
+        set_param_value((PARAM *)statuses_oauth_params2, (char *)"media_ids", (char *)media_id_string);
+        set_param_value((PARAM *)statuses_oauth_params2, (char *)"status", (char *)str);
+        //print_param_value((PARAM *)statuses_oauth_params);
+        create_oauth_params((char *)auth_str, (PARAM *)statuses_oauth_params2);
+    } else {
+        set_param_value((PARAM *)statuses_oauth_params1, (char *)"oauth_consumer_key", (char *)ckey);
+        set_param_value((PARAM *)statuses_oauth_params1, (char *)"oauth_nonce", (char *)timestamp_str);
+        set_param_value((PARAM *)statuses_oauth_params1, (char *)"oauth_timestamp", (char *)timestamp_str);
+        set_param_value((PARAM *)statuses_oauth_params1, (char *)"oauth_token", (char *)akey);
+        set_param_value((PARAM *)statuses_oauth_params1, (char *)"oauth_signature", (char *)sig_str);
+        set_param_value((PARAM *)statuses_oauth_params1, (char *)"status", (char *)str);
+        //print_param_value((PARAM *)statuses_oauth_params);
+        create_oauth_params((char *)auth_str, (PARAM *)statuses_oauth_params1);
+    }
+#ifdef CHECK_AUTH_STRING
     printf("auth_str: %s\n", auth_str);
+#endif
 }
 
-#ifdef TEST_PARAMS
+#ifdef DEBUG_PARAMS
 // expected result
 // signature = mu4s4b2t4T0HsjD0z0J749fMGPA=
 static void test_create_signature(void)
@@ -659,6 +718,7 @@ static void test_create_oauth_params(void)
 }
 #endif
 
+#ifdef DUMP_RESPONSE
 static void dump_response(HttpResponse* res) {
     mbedtls_printf("Status: %d - %s\n", res->get_status_code(), res->get_status_message().c_str());
 
@@ -668,11 +728,12 @@ static void dump_response(HttpResponse* res) {
     }
     mbedtls_printf("\nBody (%d bytes):\n\n%s\n", res->get_body_length(), res->get_body_as_string().c_str());
 }
+#endif
 
 Twitter::Twitter(NetworkInterface *iface)
 {
     _iface = iface;
-#ifdef TEST_PARAMS
+#ifdef DEBUG_PARAMS
     test_create_signature();
     test_create_oauth_params();
 #endif
@@ -682,8 +743,6 @@ Twitter::~Twitter()
 {
 }
 
-static char body[512];
-
 void Twitter::set_keys(char *cons_key, char *cons_sec, char *accs_key, char *accs_sec)
 {
     _cons_key = cons_key;
@@ -692,28 +751,159 @@ void Twitter::set_keys(char *cons_key, char *cons_sec, char *accs_key, char *acc
     _accs_sec = accs_sec;
 }
 
-void Twitter::statuses_update(char *str)
+void Twitter::statuses_update(char *str, char *media_id_string)
 {
-    printf("\n----- Twitter Statuses Update -----\n");
-    _statuses_update(_iface, _cons_key, _cons_sec, _accs_key, _accs_sec, str);
+#ifdef DEBUG_STATUSES_UPDATE
+    printf("\n----- Twitter tweet start -----\n");
+#endif
+    _statuses_update(_iface, _cons_key, _cons_sec, _accs_key, _accs_sec, str, media_id_string);
 
-    HttpsRequest* post_req = new HttpsRequest(_iface, SSL_CA_PEM, HTTP_POST, TWITTER_API_STATUES_UPDATE);
+    HttpsRequest* post_req = new HttpsRequest(_iface, SSL_CA_PEM, HTTP_POST, TWITTER_API_UPDATE);
+#ifdef DEBUG_HTTP_POST
     post_req->set_debug(true);
+#endif
     post_req->set_header("User-Agent", "gr-peach");
     post_req->set_header("Content-Type", "application/x-www-form-urlencoded");
     post_req->set_header("Authorization", auth_str);
 
-    strcpy(body, "status=");
+    body[0] = 0;
+    if ((media_id_string != NULL) && (strlen(media_id_string) > 0)) {
+        strcat(body, "media_ids=");
+        _url_encode(media_id_string, encode_buf, ENCODE_BUF_MAX);
+        strcat(body, encode_buf);
+        strcat(body,"&");
+    }
+    strcat(body, "status=");
     _url_encode(str, encode_buf, ENCODE_BUF_MAX);
     strcat(body, encode_buf);
     strcat(body, "\r\n");
+#ifdef DEBUG_STATUSES_UPDATE
+    printf("Tweet body size: %d\n", strlen(body));
+    printf("Tweet body string: %s\n", body);
+#endif
 
     HttpResponse* post_res = post_req->send(body, strlen(body));
     if (!post_res) {
         printf("HttpRequest failed (error code %d)\n", post_req->get_error());
         //return;
     }
-    printf("\n----- Twitter Statuses Update -----\n");
+#ifdef DUMP_RESPONSE
     dump_response(post_res);
+#endif
+#ifdef DEBUG_STATUSES_UPDATE
+    printf("\n----- Twitter tweet end -----\n");
+#endif
     delete post_req;
+}
+
+static void create_boundary(void)
+{
+    unsigned int irandom;
+    irandom = (unsigned int)rand();
+    itoa(irandom, (char *)boundary_buf, 16);
+}
+
+static void _upload(NetworkInterface *iface, char *ckey, char *csec, char *akey, char *asec, char *buf, int size)
+{
+    char timestamp_str[11];
+    NTPClient ntp(iface);
+    unsigned int timestamp = (unsigned int)ntp.get_timestamp();
+    //timestamp -= 2208988800;
+    sprintf(timestamp_str, "%u", (unsigned int)timestamp);
+    set_param_value((PARAM *)req_params, (char *)"oauth_consumer_key", (char *)ckey);
+    set_param_value((PARAM *)req_params, (char *)"oauth_nonce", (char *)timestamp_str);
+    set_param_value((PARAM *)req_params, (char *)"oauth_timestamp", (char *)timestamp_str);
+    set_param_value((PARAM *)req_params, (char *)"oauth_token", (char *)akey);
+    //print_param_value((PARAM *)req_params);
+    create_signature((char *)sig_str,
+            (char *)csec,
+            (char *)asec,
+            (char *)"POST",
+            (char *)TWITTER_API_UPLOAD,
+            req_params);
+    //printf("sig_str: %s\n", sig_str);
+    set_param_value((PARAM *)upload_oauth_params, (char *)"oauth_consumer_key", (char *)ckey);
+    set_param_value((PARAM *)upload_oauth_params, (char *)"oauth_nonce", (char *)timestamp_str);
+    set_param_value((PARAM *)upload_oauth_params, (char *)"oauth_timestamp", (char *)timestamp_str);
+    set_param_value((PARAM *)upload_oauth_params, (char *)"oauth_token", (char *)akey);
+    set_param_value((PARAM *)upload_oauth_params, (char *)"oauth_signature", (char *)sig_str);
+    //print_param_value((PARAM *)oauth_params);
+    create_oauth_params((char *)auth_str, (PARAM *)upload_oauth_params);
+#ifdef CHECK_AUTH_STRING
+    printf("auth_str: %s\n", auth_str);
+#endif
+    create_boundary();
+    sprintf(upload_body_top, "--%s\r\n", boundary_buf);
+    strcat(upload_body_top, "Content-Disposition: form-data; name=\"media_data\"; \r\n\r\n");
+    sprintf(upload_body_end, "\r\n--%s--\r\n\r\n", boundary_buf);
+    sprintf(upload_header_buf, "multipart/form-data; boundary=%s", boundary_buf);
+}
+
+static void get_media_id_string(char *body, char *media_id_string)
+{
+    static char key[] = "media_id_string";
+    char *start = body;
+    char *end;
+    int len;
+
+    media_id_string[0] = 0;
+    if ((start = strstr(body, (char *)key)) != NULL ) {
+        start += strlen(key) + 3;
+        if ((end = strchr(start, '"')) != NULL) {
+            len = end - start;
+            strncpy(media_id_string, start, len);
+            media_id_string[len] = 0;
+        }
+    }
+}
+
+void Twitter::upload(char *media_id_string, char *buf, int size)
+{
+    int idx;
+    int encode_len;
+
+#ifdef DEBUG_UPLOAD
+    printf("\n----- Twitter image upload start -----\n");
+#endif
+    _upload(_iface, _cons_key, _cons_sec, _accs_key, _accs_sec, buf, size);
+
+    idx = strlen(upload_body_top);
+    strcpy(media_buf, upload_body_top);
+    base64_encode((const unsigned char *)buf, size, (char *)&media_buf[idx], &encode_len);
+    idx += encode_len;
+    strcpy((char *)&media_buf[idx], upload_body_end);
+    idx += strlen(upload_body_end);
+#ifdef DEBUG_UPLOAD
+    printf("body size: %d\r\n", idx);
+    //printf("body: %s\r\n", media_buf);
+#endif
+    HttpsRequest* post_req = new HttpsRequest(_iface, SSL_CA_PEM, HTTP_POST, TWITTER_API_UPLOAD);
+#ifdef DEBUG_HTTP_POST
+    post_req->set_debug(true);
+#endif
+    post_req->set_header("User-Agent", "gr-peach");
+    post_req->set_header("Content-Type", upload_header_buf);
+    post_req->set_header("Authorization", auth_str);
+    HttpResponse* post_res = post_req->send((const void *)media_buf, idx);
+    if (!post_res) {
+        printf("HttpRequest failed (error code %d)\n", post_req->get_error());
+        return;
+    }
+#ifdef DUMP_RESPONSE
+    dump_response(post_res);
+#endif
+    get_media_id_string((char *)post_res->get_body_as_string().c_str(), (char *)media_id_string);
+#ifdef DEBUG_UPLOAD
+    printf("media_id_string: %s\r\n", media_id_string);
+    printf("\n----- Twitter image upload end -----\n");
+#endif
+    delete post_req;
+}
+
+void Twitter::upload_and_statuses_update(char *str, char *media_id_string, char *buf, int size)
+{
+    upload(media_id_string, buf, size);
+#ifndef SKIP_STATUSES_UPLOAD
+    statuses_update(str, media_id_string);
+#endif
 }

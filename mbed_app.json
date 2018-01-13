@@ -1,10 +1,26 @@
 {
     "config": {
         "wifi-ssid": {
-            "value": "\"ssid""
+            "value": "\"SSID\""
         },
         "wifi-password": {
-            "value": "\"password\""
+            "value": "\"PASSWORD\""
+        },
+        "camera":{
+            "help": "0:disable 1:enable",
+            "value": "1"
+        },
+        "lcd":{
+            "help": "0:disable 1:enable",
+            "value": "0"
+        },
+        "usb-host-ch":{
+            "help": "(for GR-PEACH) 0:ch0 1:ch1",
+            "value": "1"
+        },
+        "lcd-type":{
+            "help": "Please see mbed-gr-libs/README.md",
+            "value": "GR_LYCHEE_LCD"
         }
     },
     "macros": ["MBEDTLS_USER_CONFIG_FILE=\"mbedtls_entropy_config.h\"",
@@ -13,11 +29,12 @@
         "MBEDTLS_SSL_VERIFY_OPTIONAL"],
     "target_overrides": {
         "*": {
+            "target.macros_add": ["HAVE_OPENCV_IMGCODECS"],
             "target.features_add": ["NANOSTACK", "LOWPAN_ROUTER", "COMMON_PAL"],
             "mbed-mesh-api.6lowpan-nd-channel-page": 0,
             "mbed-mesh-api.6lowpan-nd-channel": 12,
             "mbed-trace.enable": 0,
-            "mbed-http.http-buffer-size": 16384
+            "mbed-http.http-buffer-size": 32768
         }
     }
 }

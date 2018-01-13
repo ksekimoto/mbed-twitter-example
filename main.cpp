@@ -213,7 +213,7 @@ int main()
     printf("Netmask: %s\n", wifi.get_netmask());
     printf("Gateway: %s\n", wifi.get_gateway());
     printf("RSSI: %d\n\n", wifi.get_rssi());
-    printf("Puch switch 0 to capture image and upload to twitter\n");
+    printf("Push switch 0 to capture image and upload to twitter\n");
 
     while (1) {
 #ifdef SAVE_TO_STRORAGE
